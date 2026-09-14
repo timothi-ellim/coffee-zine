@@ -44,8 +44,17 @@
           link.setAttribute('download', '');
           link.removeAttribute('aria-disabled'); link.removeAttribute('tabindex');
         });
+        settle();
+        const cards = document.querySelector('.download-cards');
+        const before = cards.getBoundingClientRect();
         downloadForm.reset(); downloadForm.hidden = true;
         feedback.textContent = 'Email received. Choose a PDF below.';
+        // Commit success first; interruption cannot lock the files again.
+        const after = cards.getBoundingClientRect();
+        if (feedback.getClientRects().length) animate(cards, [
+          {transform:`translateY(${before.top-after.top}px)`,opacity:.65},
+          {transform:'none',opacity:1}
+        ], 260);
         if (feedback.getClientRects().length) links[0]?.focus({preventScroll:true});
       } catch (_) {
         feedback.textContent = 'Your request could not be confirmed. Please try again.';
@@ -68,6 +77,10 @@
   const photoPages = [...document.querySelectorAll('.zine-page')];
   const readerToolbar = document.querySelector('.reader-toolbar');
   const coverPage = photoPages[0], coverHome = document.querySelector('.hero-art');
+  const coverImage = coverPage.querySelector('img');
+  const releaseCover = () => root.classList.remove('cover-loading');
+  if (coverImage.complete) releaseCover();
+  else { coverImage.addEventListener('load', releaseCover, {once:true}); coverImage.addEventListener('error', releaseCover, {once:true}); }
   const readerList = document.querySelector('.reader-list');
   const notesControl = document.querySelector('#reader-notes');
   const focusControl = document.querySelector('#reading-focus');
@@ -109,16 +122,21 @@
   motionChanged();
   // One owner for every decorative animation. Semantic content is never hidden by it.
   function animate(element, frames, duration, cleanup = () => {}) {
+    animateTogether([{element, frames}], duration, cleanup);
+  }
+  function animateTogether(parts, duration, cleanup = () => {}) {
     settle();
-    if (reduced() || typeof element.animate !== 'function') { cleanup(); return; }
-    let animation;
-    try { animation = element.animate(frames, {duration, easing:'cubic-bezier(.2,.65,.3,1)'}); }
-    catch (_) { cleanup(); return; }
-    const owner = {cancel: () => { animation.cancel(); cleanup(); }};
+    if (reduced() || document.hidden || parts.some(p => typeof p.element?.animate !== 'function')) { cleanup(); return; }
+    const animations = [];
+    let cleaned = false;
+    const finish = () => { if (!cleaned) { cleaned = true; cleanup(); } };
+    const owner = {cancel: () => { animations.forEach(a => a.cancel()); finish(); }};
+    try { parts.forEach(({element, frames}) => animations.push(element.animate(frames, {duration, easing:'cubic-bezier(.22,.7,.25,1)'}))); }
+    catch (_) { owner.cancel(); return; }
     transition = owner;
-    animation.finished.then(() => {
+    Promise.all(animations.map(a => a.finished)).then(() => {
       if (transition === owner) transition = null;
-      cleanup();
+      finish();
     }).catch(() => {});
   }
   function unfold() {
@@ -191,15 +209,29 @@
     // Only the outgoing photograph moves. The destination is already usable.
     const overlay = document.createElement('div');
     overlay.className = 'turn-overlay'; overlay.setAttribute('aria-hidden','true');
-    const paper = document.createElement('img');
-    paper.src = source.currentSrc || source.src; paper.alt = '';
-    overlay.append(paper); target.querySelector('.page-figure').append(overlay);
+    const paper = document.createElement('div'); paper.className = 'turn-leaf';
+    const photograph = document.createElement('img');
+    photograph.src = source.currentSrc || source.src; photograph.alt = '';
+    const shade = document.createElement('span'); shade.className = 'turn-shade';
+    const shadow = document.createElement('span'); shadow.className = 'turn-shadow';
+    paper.append(photograph, shade); overlay.append(shadow, paper);
+    overlay.dataset.direction = direction > 0 ? 'next' : 'previous';
+    target.querySelector('.page-figure').append(overlay);
     paper.style.transformOrigin = direction > 0 ? 'left center' : 'right center';
-    animate(paper, [
-      {transform:'perspective(1800px) rotateY(0deg)',opacity:1},
-      {transform:`perspective(1800px) rotateY(${direction > 0 ? -58 : 58}deg)`,opacity:1,offset:.65},
-      {transform:`perspective(1800px) rotateY(${direction > 0 ? -100 : 100}deg)`,opacity:0}
-    ], 480, () => overlay.remove());
+    const sign = direction > 0 ? -1 : 1;
+    animateTogether([
+      {element:paper, frames:[
+        {transform:'rotateY(0deg)',opacity:1},
+        {transform:`rotateY(${sign*52}deg)`,opacity:1,offset:.55},
+        {transform:`rotateY(${sign*98}deg)`,opacity:0}
+      ]},
+      {element:shade, frames:[{opacity:0},{opacity:.25,offset:.6},{opacity:.08}]},
+      {element:shadow, frames:[
+        {transform:`translateX(${-sign*85}%) scaleX(.3)`,opacity:0},
+        {transform:`translateX(${-sign*30}%) scaleX(.8)`,opacity:.18,offset:.45},
+        {transform:`translateX(${sign*40}%) scaleX(.15)`,opacity:0}
+      ]}
+    ], 520, () => overlay.remove());
   }
   function route({ focus = false, scroll = true, deliberate = false } = {}) {
     settle(); cancelAnimationFrame(frame);
@@ -211,6 +243,7 @@
     const oldPage = selectedPage, oldLayout = readingLayout;
     const outgoing = photoPages[oldPage - 1]?.querySelector('img');
     const target = flipNumber ? document.getElementById('page-' + flipNumber[1]) : requested;
+    if (target.id !== 'home') releaseCover();
     const entering = deliberate && root.dataset.home === 'true' && target === coverPage;
     const coverBefore = entering ? coverPage.querySelector('img').getBoundingClientRect() : null;
     if (target.id === 'home') coverHome.prepend(coverPage);
@@ -286,25 +319,41 @@
   document.querySelectorAll('[data-turn]').forEach(button => button.addEventListener('click', () => goToTurn(Number(button.dataset.turn))));
   document.querySelectorAll('[data-side]').forEach(button => button.addEventListener('click', () => goToTurn(Number(button.dataset.side))));
   focusControl.addEventListener('click', () => setReadingFocus(!readingFocus));
+  function closeNotes(notes) {
+    settle(); stopAlignment(); scrollSelectionEnabled = false;
+    notes.open = false;
+    const page = notes.closest('.zine-page');
+    markPage(Number(page.id.slice(5)));
+    // Collapsing tall mobile text must not let scroll anchoring pick a prior page.
+    const top = page.getBoundingClientRect().top + scrollY - document.querySelector('.site-header').offsetHeight - readerToolbar.offsetHeight - 16;
+    window.scrollTo({top:Math.max(0,top),behavior:'instant'});
+    notesControl.focus({preventScroll:true});
+  }
   notesControl.addEventListener('click', () => {
-    settle(); stopAlignment();
+    settle(); stopAlignment(); scrollSelectionEnabled = false;
     const notes = photoPages[selectedPage - 1].querySelector('.page-notes');
+    if (notes.open) { closeNotes(notes); return; }
     notes.open = !notes.open; markPage(selectedPage);
     if (notes.open) {
+      notes.querySelector('.transcript-toggle').open = true;
       notes.querySelector('summary').focus({preventScroll:true});
       notes.scrollIntoView({block:'nearest',behavior:'instant'});
+      animate(notes.querySelector(':scope > summary'), [{backgroundColor:'#f5d9c7'},{backgroundColor:'#fffef9'}], 180);
     }
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && readingFocus && !e.target.closest('dialog') && !e.defaultPrevented) setReadingFocus(false);
   });
   document.querySelectorAll('.page-notes').forEach(notes => {
-    notes.querySelector('summary').addEventListener('click', settle);
-    notes.addEventListener('toggle', () => { if (notes.open) settle(); markPage(selectedPage); });
+    notes.querySelector('summary').addEventListener('click', e => {
+      settle();
+      if (notes.open) { e.preventDefault(); closeNotes(notes); }
+    });
+    notes.addEventListener('toggle', () => { markPage(selectedPage); });
     notes.addEventListener('keydown', e => {
       if (e.key === 'Escape' && notes.open) {
         e.preventDefault(); e.stopPropagation();
-        notes.open = false; notesControl.focus({preventScroll:true});
+        closeNotes(notes);
       }
     });
   });
@@ -430,6 +479,7 @@
       viewerReading.scrollTop = 0;
     } else requestAnimationFrame(fit);
     document.querySelector('.viewer-help').textContent = photograph ? 'Use + and − to zoom. Scroll to move the image. Escape closes the viewer.' : 'Escape closes the viewer.';
+    if (dialog.open) animate(document.querySelector('.viewer-controls'), [{opacity:.6},{opacity:1}], 160);
   }
   viewerModes.forEach(b => b.addEventListener('click', () => viewerMode(b.dataset.viewerMode)));
   let opener = null, scale = 1, fitWidth = 0;
@@ -493,6 +543,7 @@
       largeImage.onerror = () => { dialog.close(); announce('The enlarged photograph could not load. Try opening the image link again.'); };
       largeImage.src = a.href;
       dialog.showModal();
+      animate(document.querySelector('.viewer-head'), [{opacity:.5},{opacity:1}], 180);
       document.body.style.overflow = 'hidden';
       stage.scrollTo(0,0);
       document.querySelector('#close-image').focus();
@@ -501,6 +552,7 @@
     document.querySelector('#close-image').addEventListener('click', () => dialog.close());
     dialog.addEventListener('click', e => { if (e.target === dialog) { const r=dialog.getBoundingClientRect(); if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) dialog.close(); } });
     dialog.addEventListener('close', () => {
+      settle();
       document.body.style.overflow='';
       if (dialog.dataset.routeClosing === 'true') { delete dialog.dataset.routeClosing; return; }
       if (viewerPage && viewerPage !== opener?.closest('.zine-page')) {
