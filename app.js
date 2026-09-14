@@ -112,7 +112,8 @@
     settle();
     root.dataset.motion = reduced() ? 'reduce' : 'full';
     motionControl.value = preference;
-    document.querySelector('#motion-status').textContent = reduced()
+    const motionStatus = document.querySelector('#motion-status');
+    if (motionStatus) motionStatus.textContent = reduced()
       ? (preference === 'system' ? 'Your device setting reduces animations. Choose Full animations to enable them here.' : 'Animations are reduced.')
       : 'Animations are on. Use Page flip and Previous / Next to turn pages.';
   }
