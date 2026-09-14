@@ -86,7 +86,7 @@
   const focusControl = document.querySelector('#reading-focus');
   let readingFocus = false;
   function setReadingFocus(enabled, align = true) {
-    settle(); stopAlignment();
+    settle(); stopAlignment(); scrollSelectionEnabled = false;
     readingFocus = enabled; root.dataset.focusReading = String(enabled);
     focusControl.textContent = enabled ? 'Exit focus' : 'Reading focus';
     focusControl.setAttribute('aria-pressed', String(enabled));
