@@ -1,4 +1,4 @@
-/* A small, progressively enhanced reader. No packages, tracking or remote APIs. */
+/* A small, progressively enhanced reader. No packages or tracking. */
 (() => {
   'use strict';
   const root = document.documentElement;
@@ -10,6 +10,52 @@
     status.textContent = message;
     statusTimer = setTimeout(() => { status.textContent = ''; }, 7000);
   };
+  const downloadForm = document.querySelector('#download-form');
+  if (downloadForm) {
+    const endpoint = downloadForm.dataset.endpoint;
+    const email = downloadForm.querySelector('[name=email]');
+    const submit = downloadForm.querySelector('[type=submit]');
+    const feedback = document.querySelector('#download-status');
+    let sending = false;
+    const connected = /^https:\/\/formspree\.io\/f\/[A-Za-z0-9]+$/.test(endpoint || '');
+    submit.disabled = !connected;
+    downloadForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!connected || sending) return;
+      email.value = email.value.trim();
+      if (!downloadForm.reportValidity()) return;
+      if (downloadForm.querySelector('[name=_gotcha]').value) return;
+      sending = true; submit.disabled = true;
+      downloadForm.setAttribute('aria-busy', 'true');
+      feedback.textContent = 'Submitting…';
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await fetch(endpoint, {
+          method:'POST', body:new FormData(downloadForm),
+          headers:{Accept:'application/json'}, signal:controller.signal,
+          credentials:'omit', referrerPolicy:'no-referrer'
+        });
+        const result = await response.json();
+        if (!response.ok || result?.ok === false || result?.error || result?.errors) throw new Error('submission');
+        const links = [...document.querySelectorAll('[data-download-file]')];
+        links.forEach(link => {
+          link.href = link.dataset.downloadFile;
+          link.setAttribute('download', '');
+          link.removeAttribute('aria-disabled'); link.removeAttribute('tabindex');
+        });
+        downloadForm.reset(); downloadForm.hidden = true;
+        feedback.textContent = 'Email received. Choose a PDF below.';
+        if (feedback.getClientRects().length) links[0]?.focus({preventScroll:true});
+      } catch (_) {
+        feedback.textContent = 'Your request could not be confirmed. Please try again.';
+        if (feedback.getClientRects().length) feedback.focus({preventScroll:true});
+      } finally {
+        clearTimeout(timeout); sending = false; submit.disabled = false;
+        downloadForm.removeAttribute('aria-busy');
+      }
+    });
+  }
   function targetForHash() {
     let id = location.hash.slice(1) || 'home';
     try { id = decodeURIComponent(id); } catch (_) { id = 'home'; }
@@ -188,6 +234,7 @@
     document.title = (titles[activeView] ? titles[activeView] + ' | ' : '') + window.ZINE_CONFIG.siteName;
     const pageNumber = target.id.match(/^(?:text-)?page-(\d+)$/);
     if (pageNumber) markPage(Number(pageNumber[1]));
+    if (target.id === 'downloads') markPage(8);
     const back = document.querySelector('#context-return');
     const origin = history.state?.zineOrigin;
     back.hidden = !/^#(?:(?:text-)?page|flip)-[1-8]$/.test(origin || '');
