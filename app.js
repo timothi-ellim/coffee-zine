@@ -102,8 +102,8 @@
   const motionControl = document.querySelector('#motion-preference');
   let preference = 'system';
   try { preference = localStorage.getItem('zine-motion') || 'system'; } catch (_) {}
-  if (!['system','reduce'].includes(preference)) preference = 'system';
-  const reduced = () => preference === 'reduce' || systemMotion.matches;
+  if (!['system','full','reduce'].includes(preference)) preference = 'system';
+  const reduced = () => preference === 'reduce' || (preference === 'system' && systemMotion.matches);
   function settle() {
     revision++;
     if (transition) { const current = transition; transition = null; current.cancel(); }
@@ -112,6 +112,9 @@
     settle();
     root.dataset.motion = reduced() ? 'reduce' : 'full';
     motionControl.value = preference;
+    document.querySelector('#motion-status').textContent = reduced()
+      ? (preference === 'system' ? 'Your device setting reduces animations. Choose Full animations to enable them here.' : 'Animations are reduced.')
+      : 'Animations are on. Use Page flip and Previous / Next to turn pages.';
   }
   motionControl.addEventListener('change', () => {
     preference = motionControl.value;
